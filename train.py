@@ -405,22 +405,24 @@ def training(args):
                 progress_bar.close()
 
             # Log and save
-            training_report(
-                data_pack=data_pack,
-                voxel_model=voxel_model,
-                iteration=iteration,
-                loss=loss,
-                psnr=psnr,
-                elapsed=elapsed,
-                ema_psnr=ema_psnr_for_log,
-                pg_view_every=args.pg_view_every,
-                test_iterations=args.test_iterations)
+            # I run OOM when this runs, so I'm commenting it out for now
+            # training_report(
+            #     data_pack=data_pack,
+            #     voxel_model=voxel_model,
+            #     iteration=iteration,
+            #     loss=loss,
+            #     psnr=psnr,
+            #     elapsed=elapsed,
+            #     ema_psnr=ema_psnr_for_log,
+            #     pg_view_every=args.pg_view_every,
+            #     test_iterations=args.test_iterations)
 
             if iteration in args.checkpoint_iterations or iteration == cfg.procedure.n_iter:
                 voxel_model.save_iteration(iteration, quantize=args.save_quantized)
                 if args.save_optimizer:
                     voxel_model.optimizer_save_iteration(iteration)
                 print(f"[SAVE] path={voxel_model.latest_save_path}")
+                voxel_model.save_ply(os.path.join(voxel_model.model_path, "voxel_model.ply"))
 
 
 def training_report(data_pack, voxel_model, iteration, loss, psnr, elapsed, ema_psnr, pg_view_every, test_iterations):

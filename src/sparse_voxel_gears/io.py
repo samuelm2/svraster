@@ -12,6 +12,7 @@ import torch
 from svraster_cuda.meta import MAX_NUM_LEVELS
 
 from src.utils import octree_utils
+from src.utils.activation_utils import exp_linear_11
 
 class SVInOut:
 
@@ -44,6 +45,94 @@ class SVInOut:
                 state_dict[k] = v.cpu()
         torch.save(state_dict, path)
         self.latest_save_path = path
+        
+    def save_ply(self, path):
+        '''
+        Save the voxel data as a PLY file with spherical harmonics, opacity, octree information, 
+        and grid points for each voxel.
+        '''
+        try:
+            import numpy as np
+            from plyfile import PlyData, PlyElement
+        except ImportError:
+            print("Error: plyfile package is required. Install with pip install plyfile")
+            return
+            
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        # Get basic position and octree data
+        positions = self.vox_center.detach().cpu().numpy()  # Shape: (N, 3)
+        octpath = self.octpath.detach().cpu().numpy().squeeze()  # Shape: (N)
+        octlevel = self.octlevel.detach().cpu().numpy().squeeze()  # Shape: (N)
+        
+        # Get DC components (sh0)
+        sh0 = self._sh0.detach().cpu().numpy()  # Shape: (N, 3)
+        
+        # Get higher-order SH coefficients and reshape
+        shs = self._shs.detach().reshape(self._shs.shape[0], -1).cpu().numpy()  # Flatten from (N, SH_DEGREE_COEFFS, 3) to (N, 3*SH_DEGREE_COEFFS)
+        
+        # Get grid point data
+        vox_key = self.vox_key.detach().cpu().numpy()  # Shape: (N, 8)
+        
+        raw_grid_values = self._geo_grid_pts.detach().cpu()
+        grid_values = raw_grid_values.numpy().flatten()  # Shape: (M)
+        
+        # Define attribute list
+        attributes = [
+            ('x', 'f4'), ('y', 'f4'), ('z', 'f4'),          # positions
+            ('octpath', 'u4'), ('octlevel', 'u1'),    # octree data
+            ('f_dc_0', 'f4'), ('f_dc_1', 'f4'), ('f_dc_2', 'f4')  # DC components
+        ]
+        
+        # Add rest of SH coefficients based on the actual data shape
+        for i in range(shs.shape[1]):
+            attributes.append((f'f_rest_{i}', 'f4'))
+        
+        # Add grid point values for each corner (no need to store positions as they're derivable)
+        for i in range(8):
+            attributes.append((f'grid{i}_value', 'f4'))
+        
+        # Create elements array
+        elements = np.empty(len(positions), dtype=attributes)
+        
+        # Fill position and octree data
+        elements['x'] = positions[:, 0]
+        elements['y'] = positions[:, 1]
+        elements['z'] = positions[:, 2]
+        elements['octpath'] = octpath
+        elements['octlevel'] = octlevel
+        
+        # Fill DC components
+        elements['f_dc_0'] = sh0[:, 0] 
+        elements['f_dc_1'] = sh0[:, 1]
+        elements['f_dc_2'] = sh0[:, 2]
+        
+        # Fill higher-order SH coefficients (using actual shape)
+        for i in range(shs.shape[1]):
+            elements[f'f_rest_{i}'] = shs[:, i]
+        
+        # Fill grid point values for each voxel (skip storing positions)
+        for i in range(8):
+            for vox_idx in range(len(positions)):
+                grid_idx = vox_key[vox_idx, i]
+                elements[f'grid{i}_value'][vox_idx] = grid_values[grid_idx]
+        
+        # Add comments to the PLY file
+        header_comments = []
+
+        # Add scene center (which is a 3D vector)
+        header_comments.append(f"scene_center {self.scene_center[0].item()} {self.scene_center[1].item()} {self.scene_center[2].item()}")
+
+        # Add scene extent (which is a scalar)
+        header_comments.append(f"scene_extent {self.scene_extent.item()}")
+
+        # Add active_sh_degree
+        header_comments.append(f"active_sh_degree {self.active_sh_degree}")
+
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el], comments=header_comments).write(path)
+        
+        print(f"PLY file saved to: {path} with {len(positions)} points")
 
     def load(self, path):
         '''
